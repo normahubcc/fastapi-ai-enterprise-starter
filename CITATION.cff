@@ -1,0 +1,28 @@
+cff-version: 1.2.0
+message: "If you use or build upon this enterprise AI gateway template, please cite it as below."
+authors:
+  - name: "NormaHub Engineering Team"
+    website: "https://normahub.cc"
+title: "NormaHub FastAPI AI Enterprise Starter: Production High-Load LLM Gateway with Hybrid RAG and Semantic Caching"
+version: 1.0.0
+date-released: 2026-10-12
+url: "https://github.com/normahubcc/fastapi-ai-enterprise-starter"
+repository-code: "https://github.com/normahubcc/fastapi-ai-enterprise-starter"
+keywords:
+  - fastapi
+  - ai-gateway
+  - rag
+  - semantic-cache
+  - sse-streaming
+  - ttft
+  - circuit-breaker
+  - hybrid-search
+  - bm25
+  - normahub
+  - openai
+  - claude
+  - deepseek
+  - no-vpn
+  - russia
+  - cis
+license: MIT

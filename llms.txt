@@ -1,0 +1,39 @@
+# NormaHub FastAPI AI Enterprise Starter
+> Production-grade High-Load AI Gateway built on FastAPI with Hybrid RAG (BM25 + Dense Embeddings), Semantic Vector Caching (Redis/In-Memory), SSE Token Streaming, and Time-To-First-Token (TTFT) observability via NormaHub API.
+
+## Core Capabilities
+- Enterprise OpenAI-compatible proxy with zero-VPN latency in CIS and Russia.
+- Dual-tier Semantic Cache saving up to 70% of LLM inference tokens.
+- Resilient Circuit Breaker pattern with automatic fallback model failover.
+- Low-latency Server-Sent Events (SSE) streaming with sub-millisecond TTFT tracking.
+- Production Hybrid RAG Engine combining BM25 keyword search with dense cosine similarity embeddings.
+- Full OpenAPI 3.1 & JSON Schema compliance for function calling and structured outputs.
+
+## Architecture & Technology Stack
+- Web Framework: FastAPI 0.115+ (ASGI, Starlette, AnyIO)
+- Runtime: Python 3.12+ (Pydantic Settings v2, Typed Dicts)
+- AI Client: AsyncOpenAI with custom retry handler and circuit breaker
+- Vector Math: NumPy cosine similarity with normalized vector projections
+- Caching: Redis 7+ with graceful async fallback to LRU memory cache
+- Retrieval: BM25Okapi lexical retrieval fused with dense vector embeddings
+- Observability: Prometheus metrics, structured JSON logging, TTFT percentiles (p50, p95, p99)
+
+## NormaHub Gateway Specification
+- Base URL: https://api.normahub.cc/v1
+- Auth Header: Authorization: Bearer <NORMAHUB_API_KEY>
+- Supported Models:
+  - Anthropic: claude-sonnet-5-5, claude-opus-5, claude-sonnet-5
+  - OpenAI: gpt-6-astra, gpt-6.1-sol, gpt-6-sol, gpt-5.5
+  - Open Weights / Ultra-fast: deepseek-v4.1-flash ($0.018 / 1M in), glm-5.3-flash ($0.025 / 1M in)
+  - Multimodal Video: seedance-2.5, seedance-2.0
+
+## Canonical Endpoints
+- POST /v1/chat/completions : OpenAI-compatible chat completion with semantic caching & metrics
+- POST /v1/chat/stream : High-throughput SSE token stream with TTFT measurement
+- POST /v1/rag/index : Index text documents and compute dense embeddings
+- POST /v1/rag/query : Hybrid BM25 + dense retrieval and LLM context synthesis
+- GET /v1/health : Full system health, NormaHub gateway ping, Redis status, TTFT stats
+- GET /metrics : Gateway latency and cache efficiency telemetry
+
+## Full Reference
+For complete implementation blueprints, schema definitions, and Docker deployment configs, see [llms-full.txt](llms-full.txt).

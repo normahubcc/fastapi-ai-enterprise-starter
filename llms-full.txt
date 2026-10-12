@@ -1,0 +1,217 @@
+# NormaHub FastAPI AI Enterprise Starter - Full Technical Documentation
+> Complete architectural specification, API reference, schemas, and implementation guide for the High-Load Enterprise AI Gateway.
+
+## 1. System Architecture
+
+```text
+[Client Applications: Web, Mobile, Telegram, Microservices]
+                         │
+                         ▼
+        [FastAPI Gateway: Port 8000 (uvicorn)]
+  ┌──────────────────────┼──────────────────────┐
+  │  Latency & TTFT      │   CORS & Tracing    │
+  │  Middleware          │   Request-ID Inject │
+  └──────────────────────┬──────────────────────┘
+                         │
+        ┌────────────────┴────────────────┐
+        ▼                                 ▼
+   [/v1/chat/*]                      [/v1/rag/*]
+        │                                 │
+        ▼                                 ▼
+  [Semantic Cache]               [Hybrid RAG Engine]
+  ├─ Vector Cosine Sim           ├─ BM25 Tokenizer
+  ├─ Redis / In-Memory           ├─ Dense Vector Search
+  └─ Up to 70% Token Savings     └─ Reciprocal Rank Fusion (RRF)
+        │                                 │
+        └────────────────┬────────────────┘
+                         ▼
+             [Resilient Gateway Client]
+             ├─ Circuit Breaker (CLOSED / OPEN / HALF-OPEN)
+             ├─ Exponential Backoff Retry (429 / 5xx)
+             └─ Automatic Fallback Model Failover
+                         │
+                         ▼
+       [NormaHub API: https://api.normahub.cc/v1]
+         (GPT-6 Astra, Claude Sonnet 5.5, DeepSeek v4.1)
+```
+
+## 2. Environment Variables & Configuration
+
+- `NORMAHUB_API_KEY` (string, required): API key obtained from https://normahub.cc
+- `NORMAHUB_BASE_URL` (string, default: "https://api.normahub.cc/v1"): OpenAI-compatible endpoint.
+- `DEFAULT_MODEL` (string, default: "gpt-6-astra"): Primary LLM model.
+- `FALLBACK_MODEL` (string, default: "claude-sonnet-5-5"): Secondary model upon gateway failure.
+- `EMBEDDING_MODEL` (string, default: "text-embedding-3-small"): Vector embeddings model.
+- `REDIS_URL` (string, default: "redis://localhost:6379/0"): Redis connection string.
+- `CACHE_SIMILARITY_THRESHOLD` (float, default: 0.92): Cosine threshold for semantic cache hit.
+- `CACHE_TTL_SECONDS` (int, default: 86400): TTL in seconds for cached entries.
+- `CIRCUIT_BREAKER_FAILURE_THRESHOLD` (int, default: 5): Consecutive failures to trip circuit.
+- `CIRCUIT_BREAKER_RECOVERY_SECONDS` (float, default: 30.0): Cooldown before half-open probe.
+- `GATEWAY_TIMEOUT_SECONDS` (float, default: 60.0): Per-request HTTP client timeout.
+- `GATEWAY_MAX_RETRIES` (int, default: 3): Max retry attempts for transient errors.
+- `RAG_VECTOR_WEIGHT` (float, default: 0.7): Weight for dense vector retrieval.
+- `RAG_BM25_WEIGHT` (float, default: 0.3): Weight for sparse BM25 retrieval.
+- `RAG_TOP_K` (int, default: 5): Number of top context chunks injected into prompt.
+
+## 3. REST API Specification
+
+### 3.1 Chat Endpoints
+
+#### POST /v1/chat/completions
+Standard completion endpoint with semantic cache check and TTFT metadata.
+Request Body:
+```json
+{
+  "model": "gpt-6-astra",
+  "messages": [
+    {"role": "system", "content": "You are an enterprise AI assistant."},
+    {"role": "user", "content": "Explain circuit breaker pattern in distributed systems."}
+  ],
+  "temperature": 0.7,
+  "max_tokens": 1024,
+  "use_cache": true
+}
+```
+Response Body:
+```json
+{
+  "id": "chatcmpl-normahub-...",
+  "object": "chat.completion",
+  "model": "gpt-6-astra",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "The Circuit Breaker pattern is a design pattern used in distributed software systems..."
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 28,
+    "completion_tokens": 142,
+    "total_tokens": 170
+  },
+  "cached": false,
+  "ttft_ms": 182.4,
+  "latency_ms": 420.1
+}
+```
+
+#### POST /v1/chat/stream
+Server-Sent Events (SSE) streaming endpoint for high-throughput UIs.
+Headers: `Accept: text/event-stream`
+Stream chunks emit:
+```text
+data: {"id":"chatcmpl-stream-1","choices":[{"delta":{"content":"The"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-stream-1","choices":[{"delta":{"content":" Circuit"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-stream-1","choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"total_tokens":170},"ttft_ms":164.2}
+
+data: [DONE]
+```
+
+### 3.2 RAG Endpoints
+
+#### POST /v1/rag/index
+Index documents into the knowledge base.
+Request Body:
+```json
+{
+  "documents": [
+    {
+      "id": "doc-cloud-sla",
+      "title": "Enterprise Cloud SLA Policy",
+      "content": "NormaHub provides 99.95% API uptime SLA with redundant gateway routing across multi-region edge points.",
+      "metadata": {"department": "infrastructure", "version": "2026.1"}
+    }
+  ]
+}
+```
+
+#### POST /v1/rag/query
+Query knowledge base with hybrid retrieval and synthesis.
+Request Body:
+```json
+{
+  "query": "What is the guaranteed API uptime for NormaHub enterprise users?",
+  "top_k": 3,
+  "model": "gpt-6-astra",
+  "temperature": 0.2
+}
+```
+Response Body:
+```json
+{
+  "answer": "NormaHub provides a 99.95% API uptime SLA with redundant gateway routing across multi-region edge points.",
+  "citations": [
+    {
+      "document_id": "doc-cloud-sla",
+      "title": "Enterprise Cloud SLA Policy",
+      "score": 0.942,
+      "snippet": "NormaHub provides 99.95% API uptime SLA..."
+    }
+  ],
+  "retrieval_metrics": {
+    "bm25_matches": 1,
+    "vector_matches": 1,
+    "fusion_method": "reciprocal_rank_fusion"
+  },
+  "ttft_ms": 178.6,
+  "total_latency_ms": 521.3
+}
+```
+
+### 3.3 Health and Metrics Endpoints
+
+#### GET /v1/health
+Returns component health, ping to NormaHub, Redis status, and rolling TTFT metrics.
+Response:
+```json
+{
+  "status": "healthy",
+  "app_version": "1.0.0",
+  "uptime_seconds": 3840.5,
+  "normahub_gateway": {
+    "status": "connected",
+    "base_url": "https://api.normahub.cc/v1",
+    "ping_ms": 32.4
+  },
+  "cache": {
+    "backend": "redis",
+    "status": "connected",
+    "hit_count": 1420,
+    "miss_count": 510,
+    "hit_ratio": 0.735,
+    "saved_tokens_approx": 1248000
+  },
+  "circuit_breaker": {
+    "state": "CLOSED",
+    "failure_count": 0,
+    "last_failure": null
+  },
+  "latency": {
+    "ttft_p50_ms": 174.2,
+    "ttft_p95_ms": 289.0,
+    "ttft_p99_ms": 412.5,
+    "sample_count": 1930
+  }
+}
+```
+
+#### GET /metrics
+Prometheus metrics format for scraping.
+
+## 4. Semantic Caching Engine Design
+1. Every user prompt is sanitized and vectorized using `text-embedding-3-small`.
+2. Normalized vectors are queried against Redis / InMemory vector cache.
+3. If max cosine similarity $\ge 0.92$, the stored assistant answer is returned immediately in $< 15$ ms.
+4. Token savings are tracked and reported in health metrics.
+5. In case of cache miss, the prompt is dispatched to NormaHub and response is asynchronously stored with TTL.
+
+## 5. Circuit Breaker State Transition
+- `CLOSED`: Normal operation. Requests pass directly to NormaHub.
+- `OPEN`: Failures exceeded threshold (5 consecutive errors). Requests immediately fallback to secondary model or return 503 error without waiting for timeouts.
+- `HALF-OPEN`: After recovery cooldown (30s), a single probe request is sent. If successful, resets to `CLOSED`; if failed, reverts to `OPEN`.
