@@ -1,7 +1,7 @@
 """Tests for NormaHub Gateway, Circuit Breaker, Retries, and TTFT Tracking."""
 
 import asyncio
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from openai import RateLimitError
@@ -94,8 +94,9 @@ async def test_gateway_retry_on_transient_error() -> None:
 
     mock_func = AsyncMock()
     # Fail first time with RateLimitError, succeed on second attempt
+    mock_resp = MagicMock(status_code=429, headers={})
     mock_func.side_effect = [
-        RateLimitError("Rate limit exceeded", response=AsyncMock(status_code=429), body=None),
+        RateLimitError("Rate limit exceeded", response=mock_resp, body=None),
         {"result": "success"},
     ]
 
@@ -114,17 +115,6 @@ async def test_gateway_fallback_model_routing() -> None:
         gateway_max_retries=0,
     )
     gw = NormaHubGateway(settings=settings)
-
-    call_models: list[str] = []
-
-    async def mock_invoke(m: str) -> dict[str, object]:
-        call_models.append(m)
-        if m == "gpt-6-astra":
-            raise RuntimeError("Upstream GPT-6 failure")
-        return {
-            "id": "chatcmpl-fallback-test",
-            "choices": [{"message": {"role": "assistant", "content": "Fallback response"}}],
-        }
 
     async def mock_retry(fn: object) -> object:
         return await fn()
