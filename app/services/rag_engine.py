@@ -1,9 +1,13 @@
 """Hybrid RAG Engine combining BM25 lexical retrieval and dense vector embeddings."""
 
 import asyncio
+import json
 import logging
 import math
+import os
 import re
+import sqlite3
+import time
 from typing import Any
 
 import numpy as np
@@ -105,18 +109,76 @@ class ChunkRecord:
 
 
 class HybridRAGEngine:
-    """Enterprise RAG engine integrating BM25 lexical search and dense embeddings."""
+    """Enterprise RAG engine integrating BM25 lexical search and dense embeddings with SQLite persistence."""
 
     def __init__(
         self,
         gateway: NormaHubGateway | None = None,
         settings: Settings | None = None,
+        db_path: str | None = None,
     ):
         self.settings = settings or get_settings()
         self.gateway = gateway or get_gateway()
         self.bm25_index = BM25Index()
         self._chunks: dict[str, ChunkRecord] = {}
         self._lock = asyncio.Lock()
+        self.db_path = db_path or getattr(self.settings, "rag_storage_path", "data/rag_index.db")
+        self._init_sqlite()
+
+    def _init_sqlite(self) -> None:
+        """Initialize SQLite vector store and restore indexed chunks."""
+        if self.db_path != ":memory:":
+            parent_dir = os.path.dirname(self.db_path)
+            if parent_dir:
+                os.makedirs(parent_dir, exist_ok=True)
+
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("PRAGMA journal_mode=WAL;")
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS rag_chunks (
+                    chunk_id TEXT PRIMARY KEY,
+                    doc_id TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    chunk_index INTEGER NOT NULL,
+                    content TEXT NOT NULL,
+                    embedding TEXT NOT NULL,
+                    metadata TEXT NOT NULL,
+                    created_at REAL NOT NULL
+                );
+                """
+            )
+            conn.commit()
+
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT chunk_id, doc_id, title, chunk_index, content, embedding, metadata FROM rag_chunks;"
+            )
+            rows = cursor.fetchall()
+            for row in rows:
+                c_id, d_id, title, c_idx, content, emb_str, meta_str = row
+                record = ChunkRecord(
+                    chunk_id=c_id,
+                    doc_id=d_id,
+                    title=title,
+                    chunk_index=c_idx,
+                    content=content,
+                    embedding=json.loads(emb_str),
+                    metadata=json.loads(meta_str),
+                )
+                self._chunks[c_id] = record
+
+            if self._chunks:
+                all_chunk_ids = list(self._chunks.keys())
+                tokenized_corpus = [
+                    tokenize(self._chunks[cid].content) for cid in all_chunk_ids
+                ]
+                self.bm25_index.index(all_chunk_ids, tokenized_corpus)
+                logger.info(
+                    "Restored %d RAG chunks from SQLite storage (%s)",
+                    len(self._chunks),
+                    self.db_path,
+                )
 
     def chunk_text(self, text: str, chunk_size: int = 800, overlap: int = 150) -> list[str]:
         """Split document text using sliding window with character overlap."""
@@ -162,8 +224,27 @@ class HybridRAGEngine:
             indexed_doc_ids.append(doc.id)
 
         async with self._lock:
-            for chk in new_chunks:
-                self._chunks[chk.chunk_id] = chk
+            with sqlite3.connect(self.db_path) as conn:
+                for chk in new_chunks:
+                    self._chunks[chk.chunk_id] = chk
+                    conn.execute(
+                        """
+                        INSERT OR REPLACE INTO rag_chunks
+                        (chunk_id, doc_id, title, chunk_index, content, embedding, metadata, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+                        """,
+                        (
+                            chk.chunk_id,
+                            chk.doc_id,
+                            chk.title,
+                            chk.chunk_index,
+                            chk.content,
+                            json.dumps(chk.embedding),
+                            json.dumps(chk.metadata),
+                            time.time(),
+                        ),
+                    )
+                conn.commit()
 
             # Rebuild BM25 index across all current chunks
             all_chunk_ids = list(self._chunks.keys())
@@ -173,6 +254,15 @@ class HybridRAGEngine:
             self.bm25_index.index(all_chunk_ids, tokenized_corpus)
 
         return len(indexed_doc_ids), len(new_chunks), indexed_doc_ids
+
+    async def clear_index(self) -> None:
+        """Purge all chunks from memory and persistent SQLite storage."""
+        async with self._lock:
+            self._chunks.clear()
+            self.bm25_index = BM25Index()
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute("DELETE FROM rag_chunks;")
+                conn.commit()
 
     def _dense_search(self, query_embedding: list[float]) -> list[tuple[str, float]]:
         """Compute cosine similarity across all dense chunk embeddings."""

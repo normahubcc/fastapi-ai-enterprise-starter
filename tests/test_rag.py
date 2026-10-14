@@ -152,3 +152,45 @@ async def test_rag_http_endpoints(async_client: AsyncClient) -> None:
             assert resp_stats.status_code == 200
             data_stats = resp_stats.json()
             assert data_stats["total_chunks"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_rag_sqlite_persistence_restart(tmp_path) -> None:
+    """Verify that indexed chunks survive engine restarts via SQLite storage."""
+    db_file = tmp_path / "rag_storage_test.db"
+    settings = Settings(rag_vector_weight=0.7, rag_bm25_weight=0.3)
+    gw = NormaHubGateway(settings=settings)
+
+    async def mock_embed(text: str, model: str | None = None) -> list[float]:
+        return generate_deterministic_embedding(text)
+
+    with patch.object(gw, "create_embedding", side_effect=mock_embed):
+        # 1. First engine instance indexes document
+        engine1 = HybridRAGEngine(gateway=gw, settings=settings, db_path=str(db_file))
+        doc = DocumentInput(
+            id="persistent_doc_1",
+            title="High-Load Resilience",
+            content="NormaHub AI gateway features dual-layer semantic caching and automatic failover.",
+            metadata={"department": "infra"},
+        )
+        docs_indexed, chunks_indexed, doc_ids = await engine1.index_documents([doc])
+        assert docs_indexed == 1
+        assert chunks_indexed >= 1
+        assert len(engine1._chunks) >= 1
+
+        # 2. Simulate complete restart: instantiate fresh engine2 on the same SQLite database file
+        engine2 = HybridRAGEngine(gateway=gw, settings=settings, db_path=str(db_file))
+        assert len(engine2._chunks) == len(engine1._chunks)
+        assert "persistent_doc_1_chk_0" in engine2._chunks
+        assert engine2._chunks["persistent_doc_1_chk_0"].title == "High-Load Resilience"
+        assert engine2.bm25_index.corpus_size >= 1
+
+        # 3. Verify hybrid search works seamlessly on restored engine
+        citations, metrics = await engine2.hybrid_search("failover caching resilience", top_k=2)
+        assert len(citations) >= 1
+        assert citations[0].document_id == "persistent_doc_1"
+
+        # 4. Clear index
+        await engine2.clear_index()
+        assert len(engine2._chunks) == 0
+        assert engine2.bm25_index.corpus_size == 0

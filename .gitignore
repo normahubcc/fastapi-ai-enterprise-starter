@@ -38,3 +38,9 @@ htmlcov/
 # OS
 .DS_Store
 Thumbs.db
+
+# Databases & Local Storage
+data/*.db
+data/*.db-wal
+data/*.db-shm
+*.db

@@ -134,6 +134,10 @@ class Settings(BaseSettings):
         ge=0,
         description="Overlap between consecutive chunks in characters",
     )
+    rag_storage_path: str = Field(
+        default="data/rag_index.db",
+        description="Path to persistent SQLite vector and metadata store",
+    )
 
     # CORS
     allowed_origins: Annotated[list[str], BeforeValidator(_parse_origins)] = Field(
